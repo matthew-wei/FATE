@@ -56,32 +56,39 @@ class MQChannel(object):
         self._producer = None
         self._consumer = None
 
+        self._producer_config = {}
+        if extra_args['producer'] is not None:
+            self._producer_config.update(extra_args['producer'])
+
+        self._consumer_config = {}
+        if extra_args['consumer'] is not None:
+            self._consumer_config.update(extra_args['consumer'])
+
     @property
     def party_id(self):
         return self._party_id
 
     @connection_retry
     def basic_publish(self, body, properties):
-        self._get_channel()
+        self._get_channel(_type=CHANNEL_TYPE_CONSUMER)
         LOGGER.debug(f"send queue: {self._send_queue_name}")
-        return self._channel.basic_publish(exchange='', routing_key=self._send_queue_name, body=body,
-                                           properties=properties)
+        return self._channel.send(content=body, **properties)
 
     @connection_retry
     def consume(self):
-        self._get_channel()
-        # since consumer and topic are one to one corresponding, maybe it is ok to use unique subsciption name?
-        LOGGER.debug('receive topic: {}'.format(consumer.topic()))
-        return self._channel.receive(queue=self._receive_queue_name)
+        self._get_channel(_type=CHANNEL_TYPE_CONSUMER)
+        # since consumer and topic are one to one corresponding, maybe it is ok to use unique subscription name?
+        LOGGER.debug('receive topic: {}'.format(self._channel.topic()))
+        return self._channel.receive()
 
     @connection_retry
-    def basic_ack(self, delivery_tag):
-        self._get_channel()
-        return self._channel.basic_ack(delivery_tag=delivery_tag)
+    def basic_ack(self, message):
+        self._get_channel(_type=CHANNEL_TYPE_CONSUMER)
+        return self._channel.acknowledge(message)
 
     @connection_retry
     def cancel(self):
-        self._get_channel()
+        self._get_channel(_type=CHANNEL_TYPE_CONSUMER)
         return self._channel.close()
 
     @connection_retry
@@ -101,11 +108,11 @@ class MQChannel(object):
             if _type == CHANNEL_TYPE_PRODUCER:
                 channel = self._conn.create_producer(TOPIC_PREFIX.format(self._namespace, self._topic),
                                                      producer_name=UNIQUE_NAME,
-                                                     **self._extra_args)
+                                                     **self._producer_config)
             if _type == CHANNEL_TYPE_CONSUMER:
                 channel = self._conn.subscribe(TOPIC_PREFIX.format(self._namespace, self._topic),
                                                consumer_name=UNIQUE_NAME,
-                                               **self._extra_args)
+                                               **self._consumer_config)
             self._channel = channel
 
     def _clear(self):
@@ -121,6 +128,7 @@ class MQChannel(object):
             self._channel = None
 
     def _check_alive(self):
+        # a tricky way to check alive
         try:
             self._conn.get_topic_partitions('test-alive')
             return True
